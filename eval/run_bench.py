@@ -1134,6 +1134,12 @@ async def run_async(args):
 
     retriever, mode = build_retriever(args, examples, model, api_base, api_key)
     # (retriever selection logic moved to simpleqa/retriever_factory.py)
+
+    if args.dump_retrieval:
+        from lib.dump_retrieval import dump_retrieval
+
+        await dump_retrieval(args, examples, retriever, run_metadata)
+        return
     # 3. Initialize LLM client
     llm_client = LLMClient(
         model=model,
@@ -1338,6 +1344,14 @@ def main():
         "--force",
         action="store_true",
         help="Overwrite output file if it exists",
+    )
+    parser.add_argument(
+        "--dump-retrieval",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Retrieve only (no reader) and write records + retrieved tiles to DIR "
+        "(local-api retrieval only; resumable). See lib/dump_retrieval.py.",
     )
 
     # API args
