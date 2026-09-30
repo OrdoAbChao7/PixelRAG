@@ -6,7 +6,9 @@ result lets a reader model be evaluated without hosting the index or the tile co
 
 Layout under DIR:
   records.jsonl            one line per example (see _record); resumable by example_id
-  tiles/<serve path>       each retrieved tile, decoded from the serve's image_base64
+  tiles/<article_id>/<chunk file>   each retrieved tile, decoded from the serve's image_base64
+  missing_tiles.jsonl      hits the serve returned without an image (its tile is absent on
+                           the serve's disk); these are filled from the tile corpus later
   query_images/<id>.<ext>  the query image, for multimodal tasks
   dump.log                 per-example start/end lines
 """
@@ -31,6 +33,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _tile_rel(hit: dict) -> str:
+    # Keyed by article, not the serve's path: the serve prints an unresolved sub-shard as "?".
+    return f"tiles/{hit['article_id']}/{os.path.basename(hit['path'])}"
+
+
 def _record(example: dict, hits: list[dict], query_image: str | None, run_metadata: dict) -> dict:
     return {
         "example_id": example["id"],
@@ -45,7 +52,8 @@ def _record(example: dict, hits: list[dict], query_image: str | None, run_metada
         "retrieved_images": [
             {
                 "rank": rank,
-                "path": f"tiles/{h['path']}",
+                "path": _tile_rel(h),
+                "serve_path": h["path"],
                 "score": h.get("score"),
                 "url": h.get("url"),
                 "article_id": h.get("article_id"),
@@ -81,7 +89,9 @@ async def dump_retrieval(args, examples: list[dict], retriever, run_metadata: di
         if ex["id"] in done:
             log.write(f"[{_now()}] item={ex['id']} status=skip reason=already_in_records\n")
 
-    with open(records_path, "a", buffering=1) as rec_f:
+    with open(records_path, "a", buffering=1) as rec_f, open(
+        os.path.join(out_dir, "missing_tiles.jsonl"), "a", buffering=1
+    ) as miss_f:
         for start in range(0, len(todo), CHUNK):
             chunk = todo[start : start + CHUNK]
             for ex in chunk:
@@ -92,17 +102,20 @@ async def dump_retrieval(args, examples: list[dict], retriever, run_metadata: di
 
             for ex in chunk:
                 hits = retriever._cache.get(ex["id"], [])
-                missing = [h.get("path") for h in hits if not h.get("image_base64")]
-                if len(hits) < args.retrieval_top_k or missing:
+                if len(hits) < args.retrieval_top_k:
                     # Not written, so a rerun retries it.
                     log.write(
                         f"[{_now()}] item={ex['id']} status=fail hits={len(hits)} "
-                        f"no_image={len(missing)} chunk_elapsed={elapsed:.1f}s\n"
+                        f"chunk_elapsed={elapsed:.1f}s\n"
                     )
                     continue
 
+                missing = []
                 for h in hits:
-                    dst = os.path.join(out_dir, "tiles", h["path"])
+                    dst = os.path.join(out_dir, _tile_rel(h))
+                    if not h.get("image_base64"):
+                        missing.append(h)
+                        continue
                     if not os.path.exists(dst):
                         os.makedirs(os.path.dirname(dst), exist_ok=True)
                         with open(dst + ".part", "wb") as f:
@@ -116,9 +129,16 @@ async def dump_retrieval(args, examples: list[dict], retriever, run_metadata: di
                     query_image = f"query_images/{ex['id']}{ext}"
                     shutil.copyfile(src, os.path.join(out_dir, query_image))
 
+                for h in missing:
+                    miss_f.write(
+                        json.dumps({"example_id": ex["id"], "article_id": h["article_id"],
+                                    "serve_path": h["path"], "tile": _tile_rel(h)}) + "\n"
+                    )
                 rec_f.write(json.dumps(_record(ex, hits, query_image, run_metadata), ensure_ascii=False) + "\n")
                 log.write(
                     f"[{_now()}] item={ex['id']} status=ok hits={len(hits)} "
+                    f"missing_tiles={len(missing)}"
+                    f"{' ' + ','.join(h['path'] for h in missing) if missing else ''} "
                     f"query_image={'yes' if query_image else 'no'} chunk_elapsed={elapsed:.1f}s\n"
                 )
             print(f"[dump] {min(start + CHUNK, len(todo))}/{len(todo)} examples ({elapsed:.1f}s last chunk)")
