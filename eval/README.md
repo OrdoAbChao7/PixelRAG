@@ -172,6 +172,24 @@ text-only text retrieval.
 PYTHONPATH=. .venv/bin/python -m lib.grader <task> <responses.jsonl>
 ```
 
+## 6. Exporting the frozen-retrieval benchmark
+
+[`StarTrail-org/pixelrag-bench`](https://huggingface.co/datasets/StarTrail-org/pixelrag-bench)
+holds the LoRA cells' questions with their top-5 retrieved tiles, so a reader can be scored
+without a search serve. It is produced in two steps:
+
+```bash
+# 1. retrieve only (no reader); resumable, one directory per bench
+LORA_URL=http://localhost:30096/search bash dump_bench.sh <nq|nqt|sqa|mms|evqa> <out_root>
+# 2. pack into one Parquet config per bench, images embedded
+.venv/bin/python pack_bench.py <out_root> <pack_dir> --commit <sha>
+```
+
+`dump_bench.sh` runs `run_bench.py --dump-retrieval` with the same example sets, query
+images, instruction and nprobe as the LoRA cells of `reproduce.sh`. A hit whose tile is
+absent on the serve's disk is still recorded and listed in `<bench>/missing_tiles.jsonl`;
+`pack_bench.py` refuses to pack until each is filled, or listed in `--allow-missing` as lost.
+
 ## Atlas Cloud readers
 
 Select Atlas Cloud explicitly with `--atlascloud`; other readers are unchanged.
