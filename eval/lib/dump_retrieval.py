@@ -101,7 +101,9 @@ async def dump_retrieval(args, examples: list[dict], retriever, run_metadata: di
             elapsed = time.time() - t0
 
             for ex in chunk:
-                hits = retriever._cache.get(ex["id"], [])
+                # A task can repeat an example id (NQ-Tables does); the retriever cache then
+                # holds both copies' hits back to back, so keep only the first top_k.
+                hits = retriever._cache.get(ex["id"], [])[: args.retrieval_top_k]
                 if len(hits) < args.retrieval_top_k:
                     # Not written, so a rerun retries it.
                     log.write(
