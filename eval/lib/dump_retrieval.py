@@ -38,7 +38,9 @@ def _tile_rel(hit: dict) -> str:
     return f"tiles/{hit['article_id']}/{os.path.basename(hit['path'])}"
 
 
-def _record(example: dict, hits: list[dict], query_image: str | None, run_metadata: dict) -> dict:
+def _record(
+    example: dict, hits: list[dict], query_image: str | None, run_metadata: dict
+) -> dict:
     return {
         "example_id": example["id"],
         "load_index": example.get("_load_index"),
@@ -46,7 +48,9 @@ def _record(example: dict, hits: list[dict], query_image: str | None, run_metada
         # Same filter run_bench applies to original_data, so lib.grader reads these
         # records unchanged once a "final_response" field is added.
         "original_data": {
-            k: v for k, v in example.items() if not hasattr(v, "save") and not k.startswith("_")
+            k: v
+            for k, v in example.items()
+            if not hasattr(v, "save") and not k.startswith("_")
         },
         "query_image": query_image,
         "retrieved_images": [
@@ -66,7 +70,9 @@ def _record(example: dict, hits: list[dict], query_image: str | None, run_metada
     }
 
 
-async def dump_retrieval(args, examples: list[dict], retriever, run_metadata: dict) -> None:
+async def dump_retrieval(
+    args, examples: list[dict], retriever, run_metadata: dict
+) -> None:
     out_dir = args.dump_retrieval
     os.makedirs(os.path.join(out_dir, "tiles"), exist_ok=True)
     os.makedirs(os.path.join(out_dir, "query_images"), exist_ok=True)
@@ -87,11 +93,14 @@ async def dump_retrieval(args, examples: list[dict], retriever, run_metadata: di
     todo = [ex for ex in examples if ex["id"] not in done]
     for ex in examples:
         if ex["id"] in done:
-            log.write(f"[{_now()}] item={ex['id']} status=skip reason=already_in_records\n")
+            log.write(
+                f"[{_now()}] item={ex['id']} status=skip reason=already_in_records\n"
+            )
 
-    with open(records_path, "a", buffering=1) as rec_f, open(
-        os.path.join(out_dir, "missing_tiles.jsonl"), "a", buffering=1
-    ) as miss_f:
+    with (
+        open(records_path, "a", buffering=1) as rec_f,
+        open(os.path.join(out_dir, "missing_tiles.jsonl"), "a", buffering=1) as miss_f,
+    ):
         for start in range(0, len(todo), CHUNK):
             chunk = todo[start : start + CHUNK]
             for ex in chunk:
@@ -133,17 +142,31 @@ async def dump_retrieval(args, examples: list[dict], retriever, run_metadata: di
 
                 for h in missing:
                     miss_f.write(
-                        json.dumps({"example_id": ex["id"], "article_id": h["article_id"],
-                                    "serve_path": h["path"], "tile": _tile_rel(h)}) + "\n"
+                        json.dumps(
+                            {
+                                "example_id": ex["id"],
+                                "article_id": h["article_id"],
+                                "serve_path": h["path"],
+                                "tile": _tile_rel(h),
+                            }
+                        )
+                        + "\n"
                     )
-                rec_f.write(json.dumps(_record(ex, hits, query_image, run_metadata), ensure_ascii=False) + "\n")
+                rec_f.write(
+                    json.dumps(
+                        _record(ex, hits, query_image, run_metadata), ensure_ascii=False
+                    )
+                    + "\n"
+                )
                 log.write(
                     f"[{_now()}] item={ex['id']} status=ok hits={len(hits)} "
                     f"missing_tiles={len(missing)}"
                     f"{' ' + ','.join(h['path'] for h in missing) if missing else ''} "
                     f"query_image={'yes' if query_image else 'no'} chunk_elapsed={elapsed:.1f}s\n"
                 )
-            print(f"[dump] {min(start + CHUNK, len(todo))}/{len(todo)} examples ({elapsed:.1f}s last chunk)")
+            print(
+                f"[dump] {min(start + CHUNK, len(todo))}/{len(todo)} examples ({elapsed:.1f}s last chunk)"
+            )
 
     log.write(f"[{_now()}] run_end task={args.task}\n")
     log.close()
