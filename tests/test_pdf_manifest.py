@@ -9,29 +9,25 @@ entire document.
 """
 
 import json
-import shutil
+import sys
+from types import ModuleType
 from pathlib import Path
 
 import pytest
 from PIL import Image
 from pixelrag_render import render_pdf
 
-# pdf2image ships in the optional `pdf` extra and needs poppler's rasteriser on
-# PATH; CI syncs only `--extra dev`. Skip rather than fail, matching how the
-# suite treats the other extras (see test_serve_backends.py).
-pytest.importorskip("pdf2image", reason="pdf extra not installed")
-
-pytestmark = pytest.mark.skipif(
-    shutil.which("pdftoppm") is None,
-    reason="poppler (pdftoppm) not on PATH; pdf2image cannot rasterise",
-)
-
 
 @pytest.fixture
-def three_page_pdf(tmp_path):
+def three_page_pdf(tmp_path, monkeypatch):
     pdf = tmp_path / "doc.pdf"
     pages = [Image.new("RGB", (612, 792), "white") for _ in range(3)]
     pages[0].save(pdf, save_all=True, append_images=pages[1:])
+    fake_pdf2image = ModuleType("pdf2image")
+    fake_pdf2image.convert_from_path = lambda **kwargs: pages[
+        kwargs.get("first_page", 1) - 1 : kwargs.get("last_page", len(pages))
+    ]
+    monkeypatch.setitem(sys.modules, "pdf2image", fake_pdf2image)
     return pdf
 
 
@@ -71,3 +67,23 @@ def test_pdf_manifest_records_a_full_page_range_as_incomplete(three_page_pdf, tm
     assert len(manifest["tiles"]) == 3
     assert manifest["complete"] is False
     assert manifest["requested_pages"] == [1, 2, 3]
+
+
+def test_pdf_subset_preserves_original_page_numbers(three_page_pdf, tmp_path):
+    dirs = render_pdf(three_page_pdf, tmp_path / "out", dpi=50, pages=[3])
+    manifest = _manifest(dirs)
+    chunks = json.loads((Path(dirs[0]) / "chunks.json").read_text())
+
+    assert manifest["tiles"] == ["tile_0003.jpg"]
+    assert chunks["chunks"][0]["tile_index"] == 3
+    assert (Path(dirs[0]) / "tile_0003.jpg").exists()
+
+
+def test_sparse_pdf_subset_keeps_selected_page_number_gaps(three_page_pdf, tmp_path):
+    dirs = render_pdf(three_page_pdf, tmp_path / "out", dpi=50, pages=[1, 3])
+    manifest = _manifest(dirs)
+    chunks = json.loads((Path(dirs[0]) / "chunks.json").read_text())
+
+    assert manifest["tiles"] == ["tile_0001.jpg", "tile_0003.jpg"]
+    assert [chunk["tile_index"] for chunk in chunks["chunks"]] == [1, 3]
+    assert not (Path(dirs[0]) / "tile_0002.jpg").exists()
